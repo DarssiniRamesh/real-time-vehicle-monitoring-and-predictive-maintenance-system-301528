@@ -13,6 +13,41 @@ This project provides a minimal React template with a clean, modern UI and minim
 
 In the project directory, you can run:
 
+## Backend API contract + CORS (verified)
+
+This frontend expects the FastAPI backend described by `interfaces/telemetry_backend_openapi.json` and calls the following endpoints:
+
+- `GET /api/v1/health` (connectivity check)
+- `GET /api/v1/assets` → returns `AssetListItem[]`
+- `GET /api/v1/telemetry?assetId=<id>&from=<iso>&to=<iso>&agg=<enum>&interval=<seconds>` → returns `TelemetryQueryResponse`
+  - `assetId`, `from`, `to` are required by the backend contract
+  - `interval` is required when `agg != "none"`
+- `POST /api/v1/predict` body: `{ asset_id?: string, timestamp?: string, readings?: object }` → returns `PredictionResult`
+- `GET /api/v1/model` → returns `ModelMetadata`
+- `GET /api/v1/alerts` supports filters: `assetId`, `severity`, `acknowledged`, `from`, `to`, `sort`, `offset`, `limit`, `page` → returns `{ total, items }`
+- `POST /api/v1/alerts/ack` body: `{ ids: string[], acked_by?: string, ack_comment?: string }` → returns `{ updated, not_found }`
+
+### CORS requirement
+
+For local dev, the backend must allow cross-origin requests from:
+- `http://localhost:3000` (frontend)
+to:
+- `http://localhost:3001` (backend)
+
+If CORS is not configured correctly on the backend, the browser will block requests even if the API is reachable.
+
+### API base URL env resolution
+
+The API base URL is resolved in `src/config/env.js` using the first defined value (highest priority first):
+
+1. `REACT_APP_API_BASE_URL`
+2. `REACT_APP_API_BASE`
+3. `REACT_APP_BACKEND_URL`
+
+If none are set, it falls back to same-origin (`""`), which is only correct when the frontend is reverse-proxied behind the backend.
+
+See `.env.example` for a working configuration.
+
 ### `npm start`
 
 Runs the app in development mode.\
