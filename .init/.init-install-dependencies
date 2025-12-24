@@ -1,0 +1,4 @@
+{
+    "command": "npm install",
+    "working_directory": "/home/kavia/workspace/code-generation/real-time-vehicle-monitoring-and-predictive-maintenance-system-301528/telemetry_frontend"
+}
