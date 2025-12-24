@@ -221,6 +221,10 @@ async function request(path, options = {}) {
       });
     }
 
+    // Predictable shape rule:
+    // - If backend returns an empty body, parseJson returns null.
+    // - Callers may normalize this further, but we keep null here to preserve
+    //   “no payload” semantics for some endpoints.
     return data;
   } catch (e) {
     if (e?.name === "AbortError") {
@@ -278,7 +282,8 @@ export const api = {
      * @returns {Promise<AssetListItem[]>}
      */
     list: async () => {
-      return request("/api/v1/assets", { method: "GET" });
+      const data = await request("/api/v1/assets", { method: "GET" });
+      return Array.isArray(data) ? data : [];
     },
   },
 
@@ -297,7 +302,28 @@ export const api = {
      */
     get: async ({ assetId, from, to, agg = "none", interval } = {}) => {
       const qs = toQueryString({ assetId, from, to, agg, interval });
-      return request(`/api/v1/telemetry${qs}`, { method: "GET" });
+      const data = await request(`/api/v1/telemetry${qs}`, { method: "GET" });
+
+      // Predictable shape: always return a TelemetryQueryResponse-like object.
+      if (!data || typeof data !== "object") {
+        return {
+          asset_id: assetId || "",
+          from: from || "",
+          to: to || "",
+          agg,
+          interval,
+          points: [],
+        };
+      }
+
+      return {
+        asset_id: data.asset_id ?? assetId ?? "",
+        from: data.from ?? from ?? "",
+        to: data.to ?? to ?? "",
+        agg: data.agg ?? agg,
+        interval: data.interval ?? interval,
+        points: Array.isArray(data.points) ? data.points : [],
+      };
     },
   },
 
@@ -320,7 +346,17 @@ export const api = {
      */
     list: async (params = {}) => {
       const qs = toQueryString(params);
-      return request(`/api/v1/alerts${qs}`, { method: "GET" });
+      const data = await request(`/api/v1/alerts${qs}`, { method: "GET" });
+
+      // Predictable shape: always return { total, items }.
+      if (!data || typeof data !== "object") {
+        return { total: 0, items: [] };
+      }
+
+      return {
+        total: typeof data.total === "number" ? data.total : 0,
+        items: Array.isArray(data.items) ? data.items : [],
+      };
     },
 
     /**
@@ -331,11 +367,21 @@ export const api = {
      * @returns {Promise<AlertAckResponse>}
      */
     ack: async (body) => {
-      return request("/api/v1/alerts/ack", {
+      const data = await request("/api/v1/alerts/ack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body || {}),
       });
+
+      // Predictable shape: always return { updated, not_found }.
+      if (!data || typeof data !== "object") {
+        return { updated: [], not_found: [] };
+      }
+
+      return {
+        updated: Array.isArray(data.updated) ? data.updated : [],
+        not_found: Array.isArray(data.not_found) ? data.not_found : [],
+      };
     },
   },
 
