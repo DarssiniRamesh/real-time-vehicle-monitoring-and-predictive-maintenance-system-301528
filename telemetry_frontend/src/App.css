@@ -1,104 +1,186 @@
-/* CSS Variables for Theme Management */
-:root {
-  /* Light theme colors */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f9fa;
-  --text-primary: #282c34;
-  --text-secondary: #61dafb;
-  --border-color: #e9ecef;
-  --button-bg: #007bff;
-  --button-text: #ffffff;
-}
-
-[data-theme="dark"] {
-  /* Dark theme colors */
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #282c34;
-  --text-primary: #ffffff;
-  --text-secondary: #61dafb;
-  --border-color: #404040;
-  --button-bg: #0056b3;
-  --button-text: #ffffff;
-}
-
-.App {
-  text-align: center;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+/* App shell layout */
+.appShell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
   min-height: 100vh;
-  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: var(--space-5) var(--space-4);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
-.App-header {
-  background-color: var(--bg-secondary);
-  min-height: 100vh;
+.brandMark {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(245, 158, 11, 0.18));
+  border: 1px solid rgba(37, 99, 235, 0.20);
+  box-shadow: var(--shadow-sm);
+}
+
+.brandTitle {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: var(--text-primary);
-  transition: background-color 0.3s ease;
-  position: relative;
+  line-height: 1.1;
 }
 
-.App-link {
-  color: var(--text-secondary);
-  transition: color 0.3s ease;
-}
-
-.theme-toggle {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  background-color: var(--button-bg);
-  color: var(--button-text);
-  border: none;
-  border-radius: 8px;
-  padding: 10px 20px;
+.brandTitle strong {
   font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  letter-spacing: 0.2px;
 }
 
-.theme-toggle:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  opacity: 0.9;
+.brandTitle span {
+  font-size: 12px;
+  color: var(--color-muted);
 }
 
-.theme-toggle:active {
-  transform: translateY(0);
+.navGroupLabel {
+  font-size: 12px;
+  color: var(--color-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: var(--space-4) var(--space-2) var(--space-2);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
+.navList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: var(--color-text);
+  border: 1px solid transparent;
+  transition: background 160ms ease, border-color 160ms ease, transform 80ms ease;
+}
+
+.navLink:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.18);
+}
+
+.navLink:active {
+  transform: translateY(1px);
+}
+
+.navLinkActive {
+  background: rgba(37, 99, 235, 0.10);
+  border-color: rgba(37, 99, 235, 0.25);
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+}
+
+.navIcon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+}
+
+.main {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 64px 1fr;
+}
+
+/* Top bar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.appTitle {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Content area */
+.contentWrap {
+  padding: var(--space-6);
+  background:
+    radial-gradient(900px 420px at 14% 0%, rgba(37, 99, 235, 0.10), transparent 60%),
+    radial-gradient(900px 420px at 80% 10%, rgba(245, 158, 11, 0.10), transparent 55%),
+    var(--color-bg);
+}
+
+.contentInner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  gap: var(--space-5);
+}
+
+/* Responsive */
+@media (max-width: 960px) {
+  .appShell {
+    grid-template-columns: 86px 1fr;
   }
-  to {
-    transform: rotate(360deg);
+
+  .brandTitle {
+    display: none;
+  }
+
+  .navGroupLabel {
+    display: none;
+  }
+
+  .navLink {
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .navLink span {
+    display: none;
   }
 }
 
-/* Responsive design for mobile */
-@media (max-width: 768px) {
-  .theme-toggle {
-    top: 10px;
-    right: 10px;
-    padding: 8px 16px;
-    font-size: 12px;
+@media (max-width: 640px) {
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+
+  .contentWrap {
+    padding: var(--space-4);
   }
 }
