@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "../config/env";
 import { getApi } from "../api/client";
 import { useMockSwitch } from "../hooks/useMockSwitch";
@@ -11,6 +11,28 @@ import { useMockSwitch } from "../hooks/useMockSwitch";
  */
 
 /**
+ * @typedef {"unknown"|"ok"|"error"} HealthStatus
+ */
+
+/**
+ * @typedef {object} HealthState
+ * @property {HealthStatus} status
+ * @property {string|null} lastCheckedAtIso
+ * @property {string|null} error
+ */
+
+/**
+ * @typedef {object} PollingMeta
+ * @property {boolean} running
+ * @property {string|null} lastRefreshAtIso
+ * @property {string|null} lastError
+ */
+
+/**
+ * @typedef {Record<string, PollingMeta>} PollingMetaMap
+ */
+
+/**
  * @typedef {object} AppState
  * @property {string} apiBaseUrl
  * @property {PollingIntervals} pollingIntervals
@@ -18,6 +40,10 @@ import { useMockSwitch } from "../hooks/useMockSwitch";
  * @property {(next: boolean) => void} setMockMode
  * @property {() => void} toggleMockMode
  * @property {ReturnType<import("../api/client").getApi>} api
+ * @property {HealthState} health
+ * @property {() => Promise<void>} runHealthCheck
+ * @property {PollingMetaMap} pollingMeta
+ * @property {(key: string, next: Partial<PollingMeta>) => void} setPollingMeta
  */
 
 const AppStateContext = createContext(null);
@@ -32,10 +58,11 @@ function readPollIntervalMs() {
 /**
  * PUBLIC_INTERFACE
  * AppStateProvider provides centralized runtime config/state:
- * - apiBaseUrl
- * - pollingIntervals
- * - mockMode (env/localStorage driven)
- * - api client instance (real or mock) via getApi({ mockMode })
+ * - current API instance (real/mock) + base URL
+ * - centralized polling intervals
+ * - persisted mockMode toggle (localStorage)
+ * - connectivity/health status (checked on start + when switching clients)
+ * - shared polling metadata for small UI indicators (last refresh / running)
  *
  * @param {{ children: React.ReactNode }} props
  */
@@ -58,6 +85,45 @@ export function AppStateProvider({ children }) {
     return getApi({ mockMode, baseUrl: apiBaseUrl });
   }, [apiBaseUrl, mockMode]);
 
+  const [health, setHealth] = useState(
+    /** @type {HealthState} */ ({
+      status: "unknown",
+      lastCheckedAtIso: null,
+      error: null,
+    })
+  );
+
+  const [pollingMeta, setPollingMetaState] = useState(
+    /** @type {PollingMetaMap} */ ({})
+  );
+
+  const setPollingMeta = useCallback((key, next) => {
+    if (!key) return;
+    setPollingMetaState((prev) => {
+      const current = prev[key] || { running: false, lastRefreshAtIso: null, lastError: null };
+      return { ...prev, [key]: { ...current, ...next } };
+    });
+  }, []);
+
+  const runHealthCheck = useCallback(async () => {
+    setHealth((prev) => ({ ...prev, error: null }));
+    try {
+      await api.healthCheck();
+      setHealth({ status: "ok", lastCheckedAtIso: new Date().toISOString(), error: null });
+    } catch (e) {
+      setHealth({
+        status: "error",
+        lastCheckedAtIso: new Date().toISOString(),
+        error: e?.message || "Health check failed",
+      });
+    }
+  }, [api]);
+
+  // Health check at app start + whenever API client switches (mock/real, or base URL change).
+  useEffect(() => {
+    runHealthCheck();
+  }, [runHealthCheck]);
+
   const value = useMemo(() => {
     return {
       apiBaseUrl,
@@ -66,8 +132,23 @@ export function AppStateProvider({ children }) {
       setMockMode,
       toggleMockMode,
       api,
+      health,
+      runHealthCheck,
+      pollingMeta,
+      setPollingMeta,
     };
-  }, [api, apiBaseUrl, mockMode, pollingIntervals, setMockMode, toggleMockMode]);
+  }, [
+    api,
+    apiBaseUrl,
+    health,
+    mockMode,
+    pollingIntervals,
+    pollingMeta,
+    runHealthCheck,
+    setMockMode,
+    setPollingMeta,
+    toggleMockMode,
+  ]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

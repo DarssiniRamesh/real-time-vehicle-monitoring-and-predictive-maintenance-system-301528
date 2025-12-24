@@ -9,6 +9,7 @@ import { formatDateTime } from "../utils/format";
 import { getLatestValue, getWindowAverage } from "../utils/telemetry";
 import { usePolling } from "../hooks/usePolling";
 import { useAppState } from "../state/AppStateContext";
+import { PollingIndicator } from "../components/ui/PollingIndicator";
 
 const SENSOR_PALETTE = [
   { line: "rgba(37, 99, 235, 0.95)", fill: "rgba(37, 99, 235, 0.10)" }, // blue
@@ -75,7 +76,7 @@ function predictionTone(sev) {
  * DashboardPage: KPIs + live telemetry chart + prediction panel.
  */
 export function DashboardPage() {
-  const { api, pollingIntervals } = useAppState();
+  const { api, pollingIntervals, setPollingMeta } = useAppState();
 
   // Base data
   const [assets, setAssets] = useState([]);
@@ -251,10 +252,20 @@ export function DashboardPage() {
   }, [loadAlertsLastHour, loadTelemetry, runPrediction, selectedAssetId]);
 
   // Poll telemetry only (keeps dashboard snappy).
-  usePolling(() => {
-    if (!selectedAssetId) return;
-    return Promise.all([loadTelemetry(selectedAssetId), loadAlertsLastHour()]).then(() => undefined);
-  }, selectedAssetId ? pollingIntervals.dashboardTelemetryMs : null);
+  usePolling(
+    () => {
+      if (!selectedAssetId) return;
+      return Promise.all([loadTelemetry(selectedAssetId), loadAlertsLastHour()]).then(() => undefined);
+    },
+    selectedAssetId ? pollingIntervals.dashboardTelemetryMs : null,
+    {
+      onTickStart: () => setPollingMeta("dashboard", { running: true, lastError: null }),
+      onTickEnd: () =>
+        setPollingMeta("dashboard", { running: false, lastRefreshAtIso: new Date().toISOString(), lastError: null }),
+      onTickError: (err) =>
+        setPollingMeta("dashboard", { running: false, lastError: err?.message || "Polling failed" }),
+    }
+  );
 
   if (pageLoading) return <LoadingState label="Loading dashboard" />;
   if (pageError) {
@@ -386,12 +397,7 @@ export function DashboardPage() {
                 </select>
               </div>
 
-              <Badge
-                tone="primary"
-                ariaLabel={`Polling interval ${Math.round(pollingIntervals.dashboardTelemetryMs / 1000)} seconds`}
-              >
-                poll {Math.round(pollingIntervals.dashboardTelemetryMs / 1000)}s
-              </Badge>
+              <PollingIndicator pollingKey="dashboard" label={`poll ${Math.round(pollingIntervals.dashboardTelemetryMs / 1000)}s`} />
             </div>
           }
         >

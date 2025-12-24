@@ -1,20 +1,33 @@
 import { useEffect, useRef } from "react";
 
 /**
+ * @typedef {object} UsePollingOptions
+ * @property {() => void} [onTickStart]
+ * @property {() => void} [onTickEnd]
+ * @property {(err: any) => void} [onTickError]
+ */
+
+/**
  * PUBLIC_INTERFACE
  * usePolling runs `fn` immediately (on mount / dependency change) and then
  * repeatedly every `intervalMs` milliseconds. Pass `null` to disable polling.
  *
  * - Supports async functions; avoids overlapping executions.
- * - Cancels state updates by using an internal "isMounted" guard.
+ * - Ensures cleanup on route changes to prevent duplicate intervals/leaks.
  *
  * @param {() => (void|Promise<void>)} fn
  * @param {number|null|undefined} intervalMs
+ * @param {UsePollingOptions} [options]
  */
-export function usePolling(fn, intervalMs) {
+export function usePolling(fn, intervalMs, options) {
   const fnRef = useRef(fn);
   const runningRef = useRef(false);
   const mountedRef = useRef(false);
+
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
 
   // Keep latest fn without re-subscribing the interval.
   useEffect(() => {
@@ -38,8 +51,13 @@ export function usePolling(fn, intervalMs) {
       if (runningRef.current) return;
 
       runningRef.current = true;
+      optionsRef.current?.onTickStart?.();
+
       try {
         await fnRef.current?.();
+        optionsRef.current?.onTickEnd?.();
+      } catch (err) {
+        optionsRef.current?.onTickError?.(err);
       } finally {
         runningRef.current = false;
       }

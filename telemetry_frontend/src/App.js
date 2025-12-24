@@ -211,30 +211,14 @@ function AppShell() {
  * - Responsive content area with gradient background and card surfaces
  */
 function StartupHealthCheck() {
-  const { api, mockMode } = useAppState();
+  const { mockMode } = useAppState();
 
-  // Basic connectivity log at startup for POC/debugging.
+  // Keep a lightweight startup log for debugging (health status is managed in AppStateContext).
   useEffect(() => {
     const cfg = getRuntimeConfig();
     // eslint-disable-next-line no-console
     console.info("[startup] runtime config", { ...cfg, mockMode });
-
-    api
-      .healthCheck()
-      .then((res) => {
-        // eslint-disable-next-line no-console
-        console.info("[startup] backend health ok", res);
-      })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        console.warn("[startup] backend health failed", {
-          message: err?.message,
-          status: err?.status,
-          code: err?.code,
-          url: err?.url,
-        });
-      });
-  }, [api, mockMode]);
+  }, [mockMode]);
 
   return null;
 }

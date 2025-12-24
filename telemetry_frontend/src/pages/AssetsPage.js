@@ -9,6 +9,7 @@ import { formatDateTime, formatRelativeTime } from "../utils/format";
 import { TelemetryLineChart } from "../components/charts/TelemetryLineChart";
 import { usePolling } from "../hooks/usePolling";
 import { useAppState } from "../state/AppStateContext";
+import { PollingIndicator } from "../components/ui/PollingIndicator";
 
 const SENSOR_PALETTE = [
   { line: "rgba(37, 99, 235, 0.95)", fill: "rgba(37, 99, 235, 0.10)" },
@@ -70,7 +71,7 @@ function buildSeries(telemetry, keys) {
  * AssetsPage lists monitored assets and shows a detail mini chart for the selected asset.
  */
 export function AssetsPage() {
-  const { api, pollingIntervals } = useAppState();
+  const { api, pollingIntervals, setPollingMeta } = useAppState();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -185,10 +186,20 @@ export function AssetsPage() {
     if (selectedAssetId) loadDetail(selectedAssetId);
   }, [loadDetail, selectedAssetId]);
 
-  usePolling(() => {
-    if (!selectedAssetId) return;
-    return loadDetail(selectedAssetId);
-  }, selectedAssetId ? pollingIntervals.assetsDetailMs : null);
+  usePolling(
+    () => {
+      if (!selectedAssetId) return;
+      return loadDetail(selectedAssetId);
+    },
+    selectedAssetId ? pollingIntervals.assetsDetailMs : null,
+    {
+      onTickStart: () => setPollingMeta("assets", { running: true, lastError: null }),
+      onTickEnd: () =>
+        setPollingMeta("assets", { running: false, lastRefreshAtIso: new Date().toISOString(), lastError: null }),
+      onTickError: (err) =>
+        setPollingMeta("assets", { running: false, lastError: err?.message || "Polling failed" }),
+    }
+  );
 
   const chartKeys = useMemo(() => {
     const pts = Array.isArray(detailTelemetry?.points) ? detailTelemetry.points : [];
@@ -302,9 +313,12 @@ export function AssetsPage() {
         title="Asset detail"
         actions={
           selected ? (
-            <Badge tone="primary" ariaLabel={`Selected asset ${selected.id}`}>
-              {selected.id}
-            </Badge>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <Badge tone="primary" ariaLabel={`Selected asset ${selected.id}`}>
+                {selected.id}
+              </Badge>
+              <PollingIndicator pollingKey="assets" label={`poll ${Math.round(pollingIntervals.assetsDetailMs / 1000)}s`} />
+            </div>
           ) : (
             <Badge tone="neutral" ariaLabel="No asset selected">
               —

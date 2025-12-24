@@ -6,7 +6,9 @@ import { EmptyState, ErrorState } from "../components/ui/States";
 import { TableSkeleton } from "../components/ui/TableSkeleton";
 import styles from "./pages.module.css";
 import { formatDateTime } from "../utils/format";
+import { usePolling } from "../hooks/usePolling";
 import { useAppState } from "../state/AppStateContext";
+import { PollingIndicator } from "../components/ui/PollingIndicator";
 
 /**
  * @param {"critical"|"high"|"medium"|"low"|string} severity
@@ -40,7 +42,7 @@ function ariaSortFor(sort, field) {
  * AlertsPage lists alerts with filtering/sorting/pagination and bulk acknowledgement.
  */
 export function AlertsPage() {
-  const { api } = useAppState();
+  const { api, pollingIntervals, setPollingMeta } = useAppState();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -94,6 +96,23 @@ export function AlertsPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  // Centralized polling for the current filter/sort/page view.
+  // Avoid polling while bulk-ack is in progress to prevent UI thrash.
+  usePolling(
+    () => {
+      if (isAcking) return;
+      return load();
+    },
+    pollingIntervals.alertsListMs,
+    {
+      onTickStart: () => setPollingMeta("alerts", { running: true, lastError: null }),
+      onTickEnd: () =>
+        setPollingMeta("alerts", { running: false, lastRefreshAtIso: new Date().toISOString(), lastError: null }),
+      onTickError: (err) =>
+        setPollingMeta("alerts", { running: false, lastError: err?.message || "Polling failed" }),
+    }
+  );
 
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const selectedCount = selected.size;
@@ -198,6 +217,7 @@ export function AlertsPage() {
 
   const tableActions = (
     <div className={styles.controlsRow}>
+      <PollingIndicator pollingKey="alerts" label={`poll ${Math.round(pollingIntervals.alertsListMs / 1000)}s`} />
       <Button variant="secondary" ariaLabel="Reload alerts" onClick={() => load()} disabled={loading || isAcking}>
         Reload
       </Button>
