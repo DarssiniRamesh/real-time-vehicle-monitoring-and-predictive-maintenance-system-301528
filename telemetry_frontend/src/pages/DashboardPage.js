@@ -3,12 +3,12 @@ import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { ErrorState, LoadingState, EmptyState } from "../components/ui/States";
-import { api } from "../api/client";
 import styles from "./pages.module.css";
 import { TelemetryLineChart } from "../components/charts/TelemetryLineChart";
 import { formatDateTime } from "../utils/format";
-import { useInterval } from "../hooks/useInterval";
 import { getLatestValue, getWindowAverage } from "../utils/telemetry";
+import { usePolling } from "../hooks/usePolling";
+import { useAppState } from "../state/AppStateContext";
 
 const SENSOR_PALETTE = [
   { line: "rgba(37, 99, 235, 0.95)", fill: "rgba(37, 99, 235, 0.10)" }, // blue
@@ -75,6 +75,8 @@ function predictionTone(sev) {
  * DashboardPage: KPIs + live telemetry chart + prediction panel.
  */
 export function DashboardPage() {
+  const { api, pollingIntervals } = useAppState();
+
   // Base data
   const [assets, setAssets] = useState([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
@@ -249,14 +251,10 @@ export function DashboardPage() {
   }, [loadAlertsLastHour, loadTelemetry, runPrediction, selectedAssetId]);
 
   // Poll telemetry only (keeps dashboard snappy).
-  useInterval(
-    () => {
-      if (!selectedAssetId) return;
-      loadTelemetry(selectedAssetId);
-      loadAlertsLastHour();
-    },
-    selectedAssetId ? 20_000 : null
-  );
+  usePolling(() => {
+    if (!selectedAssetId) return;
+    return Promise.all([loadTelemetry(selectedAssetId), loadAlertsLastHour()]).then(() => undefined);
+  }, selectedAssetId ? pollingIntervals.dashboardTelemetryMs : null);
 
   if (pageLoading) return <LoadingState label="Loading dashboard" />;
   if (pageError) {
@@ -388,8 +386,11 @@ export function DashboardPage() {
                 </select>
               </div>
 
-              <Badge tone="primary" ariaLabel="Polling interval 20 seconds">
-                poll 20s
+              <Badge
+                tone="primary"
+                ariaLabel={`Polling interval ${Math.round(pollingIntervals.dashboardTelemetryMs / 1000)} seconds`}
+              >
+                poll {Math.round(pollingIntervals.dashboardTelemetryMs / 1000)}s
               </Badge>
             </div>
           }

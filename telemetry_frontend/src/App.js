@@ -7,8 +7,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { api } from "./api/client";
 import { getRuntimeConfig } from "./config/env";
+import { AppStateProvider, useAppState } from "./state/AppStateContext";
 
 function Icon({ name }) {
   // Simple inline icons to avoid additional dependencies.
@@ -210,12 +210,14 @@ function AppShell() {
  * - Top bar with title, environment badge, notifications button
  * - Responsive content area with gradient background and card surfaces
  */
-function App() {
+function StartupHealthCheck() {
+  const { api, mockMode } = useAppState();
+
   // Basic connectivity log at startup for POC/debugging.
   useEffect(() => {
     const cfg = getRuntimeConfig();
     // eslint-disable-next-line no-console
-    console.info("[startup] runtime config", cfg);
+    console.info("[startup] runtime config", { ...cfg, mockMode });
 
     api
       .healthCheck()
@@ -232,13 +234,20 @@ function App() {
           url: err?.url,
         });
       });
-  }, []);
+  }, [api, mockMode]);
 
+  return null;
+}
+
+function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
+      <AppStateProvider>
+        <BrowserRouter>
+          <StartupHealthCheck />
+          <AppShell />
+        </BrowserRouter>
+      </AppStateProvider>
     </ThemeProvider>
   );
 }

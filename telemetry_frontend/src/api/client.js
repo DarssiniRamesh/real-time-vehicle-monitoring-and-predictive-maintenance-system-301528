@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from "../config/env";
+import { createMockApi } from "./mock";
 
 /**
  * @typedef {"none"|"min"|"max"|"avg"|"p50"|"p90"} TelemetryAgg
@@ -189,8 +190,7 @@ async function parseJson(res) {
  * @param {RequestInit & { timeoutMs?: number }} [options]
  * @returns {Promise<any>}
  */
-async function request(path, options = {}) {
-  const baseUrl = getApiBaseUrl();
+async function request(baseUrl, path, options = {}) {
   const url = `${baseUrl}${path}`;
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -263,198 +263,223 @@ async function request(path, options = {}) {
  *   // Ack alerts:
  *   await api.alerts.ack({ ids: ["a1","a2"], acked_by: "frontend", ack_comment: "Reviewed" });
  */
-export const api = {
-  /**
-   * PUBLIC_INTERFACE
-   * Health call used to quickly validate connectivity at app startup.
-   * Uses the backend versioned endpoint: GET /api/v1/health
-   * @returns {Promise<any>}
-   */
-  healthCheck: async () => {
-    return request("/api/v1/health", { method: "GET" });
-  },
-
-  assets: {
+/**
+ * PUBLIC_INTERFACE
+ * createRealApi builds a real API client bound to a specific baseUrl.
+ * @param {{ baseUrl: string }} args
+ */
+export function createRealApi({ baseUrl }) {
+  return {
     /**
      * PUBLIC_INTERFACE
-     * List available assets.
-     * GET /api/v1/assets
-     * @returns {Promise<AssetListItem[]>}
+     * Health call used to quickly validate connectivity at app startup.
+     * Uses the backend versioned endpoint: GET /api/v1/health
+     * @returns {Promise<any>}
      */
-    list: async () => {
-      const data = await request("/api/v1/assets", { method: "GET" });
-      return Array.isArray(data) ? data : [];
+    healthCheck: async () => {
+      return request(baseUrl, "/api/v1/health", { method: "GET" });
     },
-  },
 
-  telemetry: {
-    /**
-     * PUBLIC_INTERFACE
-     * Get telemetry points (raw or aggregated).
-     * GET /api/v1/telemetry?assetId&from&to&agg&interval
-     * @param {object} params
-     * @param {string} params.assetId
-     * @param {string} params.from - ISO datetime
-     * @param {string} params.to - ISO datetime
-     * @param {TelemetryAgg} [params.agg]
-     * @param {number} [params.interval] - required when agg != "none"
-     * @returns {Promise<TelemetryQueryResponse>}
-     */
-    get: async ({ assetId, from, to, agg = "none", interval } = {}) => {
-      const qs = toQueryString({ assetId, from, to, agg, interval });
-      const data = await request(`/api/v1/telemetry${qs}`, { method: "GET" });
+    assets: {
+      /**
+       * PUBLIC_INTERFACE
+       * List available assets.
+       * GET /api/v1/assets
+       * @returns {Promise<AssetListItem[]>}
+       */
+      list: async () => {
+        const data = await request(baseUrl, "/api/v1/assets", { method: "GET" });
+        return Array.isArray(data) ? data : [];
+      },
+    },
 
-      // Predictable shape: always return a TelemetryQueryResponse-like object.
-      if (!data || typeof data !== "object") {
+    telemetry: {
+      /**
+       * PUBLIC_INTERFACE
+       * Get telemetry points (raw or aggregated).
+       * GET /api/v1/telemetry?assetId&from&to&agg&interval
+       * @param {object} params
+       * @param {string} params.assetId
+       * @param {string} params.from - ISO datetime
+       * @param {string} params.to - ISO datetime
+       * @param {TelemetryAgg} [params.agg]
+       * @param {number} [params.interval] - required when agg != "none"
+       * @returns {Promise<TelemetryQueryResponse>}
+       */
+      get: async ({ assetId, from, to, agg = "none", interval } = {}) => {
+        const qs = toQueryString({ assetId, from, to, agg, interval });
+        const data = await request(baseUrl, `/api/v1/telemetry${qs}`, { method: "GET" });
+
+        // Predictable shape: always return a TelemetryQueryResponse-like object.
+        if (!data || typeof data !== "object") {
+          return {
+            asset_id: assetId || "",
+            from: from || "",
+            to: to || "",
+            agg,
+            interval,
+            points: [],
+          };
+        }
+
         return {
-          asset_id: assetId || "",
-          from: from || "",
-          to: to || "",
-          agg,
-          interval,
-          points: [],
+          asset_id: data.asset_id ?? assetId ?? "",
+          from: data.from ?? from ?? "",
+          to: data.to ?? to ?? "",
+          agg: data.agg ?? agg,
+          interval: data.interval ?? interval,
+          points: Array.isArray(data.points) ? data.points : [],
         };
-      }
-
-      return {
-        asset_id: data.asset_id ?? assetId ?? "",
-        from: data.from ?? from ?? "",
-        to: data.to ?? to ?? "",
-        agg: data.agg ?? agg,
-        interval: data.interval ?? interval,
-        points: Array.isArray(data.points) ? data.points : [],
-      };
-    },
-  },
-
-  alerts: {
-    /**
-     * PUBLIC_INTERFACE
-     * List alerts with filtering/sorting/pagination.
-     * GET /api/v1/alerts
-     * @param {object} [params]
-     * @param {string} [params.assetId]
-     * @param {"critical"|"high"|"medium"|"low"} [params.severity]
-     * @param {boolean} [params.acknowledged]
-     * @param {string} [params.from] - ISO datetime
-     * @param {string} [params.to] - ISO datetime
-     * @param {string} [params.sort] - "<field>:<dir>"
-     * @param {number} [params.offset]
-     * @param {number} [params.limit]
-     * @param {number} [params.page]
-     * @returns {Promise<AlertListResponse>}
-     */
-    list: async (params = {}) => {
-      const qs = toQueryString(params);
-      const data = await request(`/api/v1/alerts${qs}`, { method: "GET" });
-
-      // Predictable shape: always return { total, items }.
-      if (!data || typeof data !== "object") {
-        return { total: 0, items: [] };
-      }
-
-      return {
-        total: typeof data.total === "number" ? data.total : 0,
-        items: Array.isArray(data.items) ? data.items : [],
-      };
+      },
     },
 
-    /**
-     * PUBLIC_INTERFACE
-     * Bulk acknowledge alerts.
-     * POST /api/v1/alerts/ack
-     * @param {AlertAckRequest} body
-     * @returns {Promise<AlertAckResponse>}
-     */
-    ack: async (body) => {
-      const data = await request("/api/v1/alerts/ack", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body || {}),
-      });
+    alerts: {
+      /**
+       * PUBLIC_INTERFACE
+       * List alerts with filtering/sorting/pagination.
+       * GET /api/v1/alerts
+       * @param {object} [params]
+       * @param {string} [params.assetId]
+       * @param {"critical"|"high"|"medium"|"low"} [params.severity]
+       * @param {boolean} [params.acknowledged]
+       * @param {string} [params.from] - ISO datetime
+       * @param {string} [params.to] - ISO datetime
+       * @param {string} [params.sort] - "<field>:<dir>"
+       * @param {number} [params.offset]
+       * @param {number} [params.limit]
+       * @param {number} [params.page]
+       * @returns {Promise<AlertListResponse>}
+       */
+      list: async (params = {}) => {
+        const qs = toQueryString(params);
+        const data = await request(baseUrl, `/api/v1/alerts${qs}`, { method: "GET" });
 
-      // Predictable shape: always return { updated, not_found }.
-      if (!data || typeof data !== "object") {
-        return { updated: [], not_found: [] };
-      }
+        // Predictable shape: always return { total, items }.
+        if (!data || typeof data !== "object") {
+          return { total: 0, items: [] };
+        }
 
-      return {
-        updated: Array.isArray(data.updated) ? data.updated : [],
-        not_found: Array.isArray(data.not_found) ? data.not_found : [],
-      };
-    },
-  },
+        return {
+          total: typeof data.total === "number" ? data.total : 0,
+          items: Array.isArray(data.items) ? data.items : [],
+        };
+      },
 
-  prediction: {
-    /**
-     * PUBLIC_INTERFACE
-     * Run baseline prediction.
-     * POST /api/v1/predict
-     * @param {PredictionRequest} body
-     * @returns {Promise<PredictionResult>}
-     */
-    predict: async (body) => {
-      return request("/api/v1/predict", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body || {}),
-      });
-    },
-  },
+      /**
+       * PUBLIC_INTERFACE
+       * Bulk acknowledge alerts.
+       * POST /api/v1/alerts/ack
+       * @param {AlertAckRequest} body
+       * @returns {Promise<AlertAckResponse>}
+       */
+      ack: async (body) => {
+        const data = await request(baseUrl, "/api/v1/alerts/ack", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
 
-  model: {
-    /**
-     * PUBLIC_INTERFACE
-     * Fetch model diagnostics/metadata (rule-based).
-     * GET /api/v1/model
-     * @returns {Promise<ModelMetadata>}
-     */
-    get: async () => {
-      return request("/api/v1/model", { method: "GET" });
-    },
-  },
+        // Predictable shape: always return { updated, not_found }.
+        if (!data || typeof data !== "object") {
+          return { updated: [], not_found: [] };
+        }
 
-  seed: {
-    /**
-     * PUBLIC_INTERFACE
-     * Seed demo assets + telemetry.
-     * POST /api/v1/seed
-     * @param {SeedRequest} body
-     * @returns {Promise<SeedResponse>}
-     */
-    run: async (body) => {
-      return request("/api/v1/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body || {}),
-      });
-    },
-  },
-
-  simulator: {
-    /**
-     * PUBLIC_INTERFACE
-     * Start telemetry simulator.
-     * POST /api/v1/simulate/start
-     * @param {SimulationStartRequest} body
-     * @returns {Promise<SimulationStatusResponse>}
-     */
-    start: async (body) => {
-      return request("/api/v1/simulate/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body || {}),
-      });
+        return {
+          updated: Array.isArray(data.updated) ? data.updated : [],
+          not_found: Array.isArray(data.not_found) ? data.not_found : [],
+        };
+      },
     },
 
-    /**
-     * PUBLIC_INTERFACE
-     * Stop telemetry simulator.
-     * POST /api/v1/simulate/stop
-     * @returns {Promise<SimulationStatusResponse>}
-     */
-    stop: async () => {
-      return request("/api/v1/simulate/stop", { method: "POST" });
+    prediction: {
+      /**
+       * PUBLIC_INTERFACE
+       * Run baseline prediction.
+       * POST /api/v1/predict
+       * @param {PredictionRequest} body
+       * @returns {Promise<PredictionResult>}
+       */
+      predict: async (body) => {
+        return request(baseUrl, "/api/v1/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+      },
     },
-  },
-};
+
+    model: {
+      /**
+       * PUBLIC_INTERFACE
+       * Fetch model diagnostics/metadata (rule-based).
+       * GET /api/v1/model
+       * @returns {Promise<ModelMetadata>}
+       */
+      get: async () => {
+        return request(baseUrl, "/api/v1/model", { method: "GET" });
+      },
+    },
+
+    seed: {
+      /**
+       * PUBLIC_INTERFACE
+       * Seed demo assets + telemetry.
+       * POST /api/v1/seed
+       * @param {SeedRequest} body
+       * @returns {Promise<SeedResponse>}
+       */
+      run: async (body) => {
+        return request(baseUrl, "/api/v1/seed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+      },
+    },
+
+    simulator: {
+      /**
+       * PUBLIC_INTERFACE
+       * Start telemetry simulator.
+       * POST /api/v1/simulate/start
+       * @param {SimulationStartRequest} body
+       * @returns {Promise<SimulationStatusResponse>}
+       */
+      start: async (body) => {
+        return request(baseUrl, "/api/v1/simulate/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+      },
+
+      /**
+       * PUBLIC_INTERFACE
+       * Stop telemetry simulator.
+       * POST /api/v1/simulate/stop
+       * @returns {Promise<SimulationStatusResponse>}
+       */
+      stop: async () => {
+        return request(baseUrl, "/api/v1/simulate/stop", { method: "POST" });
+      },
+    },
+  };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * getApi returns either the real or mock client.
+ * @param {{ mockMode?: boolean, baseUrl?: string }} args
+ */
+export function getApi({ mockMode = false, baseUrl } = {}) {
+  if (mockMode) return createMockApi();
+  const resolvedBaseUrl = typeof baseUrl === "string" ? baseUrl : getApiBaseUrl();
+  return createRealApi({ baseUrl: resolvedBaseUrl });
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Default API instance for legacy imports.
+ * (Pages now prefer getting api from AppState context.)
+ */
+export const api = getApi({ mockMode: false, baseUrl: getApiBaseUrl() });

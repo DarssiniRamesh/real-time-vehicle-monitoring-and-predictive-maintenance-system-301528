@@ -4,9 +4,9 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState, ErrorState } from "../components/ui/States";
 import { TableSkeleton } from "../components/ui/TableSkeleton";
-import { api } from "../api/client";
 import styles from "./pages.module.css";
 import { formatDateTime } from "../utils/format";
+import { useAppState } from "../state/AppStateContext";
 
 /**
  * @param {"critical"|"high"|"medium"|"low"|string} severity
@@ -40,6 +40,8 @@ function ariaSortFor(sort, field) {
  * AlertsPage lists alerts with filtering/sorting/pagination and bulk acknowledgement.
  */
 export function AlertsPage() {
+  const { api } = useAppState();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 

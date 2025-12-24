@@ -4,10 +4,11 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/States";
 import { TableSkeleton } from "../components/ui/TableSkeleton";
-import { api } from "../api/client";
 import styles from "./pages.module.css";
 import { formatDateTime, formatRelativeTime } from "../utils/format";
 import { TelemetryLineChart } from "../components/charts/TelemetryLineChart";
+import { usePolling } from "../hooks/usePolling";
+import { useAppState } from "../state/AppStateContext";
 
 const SENSOR_PALETTE = [
   { line: "rgba(37, 99, 235, 0.95)", fill: "rgba(37, 99, 235, 0.10)" },
@@ -69,6 +70,8 @@ function buildSeries(telemetry, keys) {
  * AssetsPage lists monitored assets and shows a detail mini chart for the selected asset.
  */
 export function AssetsPage() {
+  const { api, pollingIntervals } = useAppState();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -181,6 +184,11 @@ export function AssetsPage() {
   React.useEffect(() => {
     if (selectedAssetId) loadDetail(selectedAssetId);
   }, [loadDetail, selectedAssetId]);
+
+  usePolling(() => {
+    if (!selectedAssetId) return;
+    return loadDetail(selectedAssetId);
+  }, selectedAssetId ? pollingIntervals.assetsDetailMs : null);
 
   const chartKeys = useMemo(() => {
     const pts = Array.isArray(detailTelemetry?.points) ? detailTelemetry.points : [];
