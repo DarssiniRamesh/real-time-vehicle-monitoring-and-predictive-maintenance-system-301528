@@ -120,9 +120,8 @@ export function AssetsPage() {
   }, []);
 
   const loadHeartbeats = useCallback(async () => {
-    // Best-effort heartbeat: fetch a small lookback window and take latest point timestamp.
-    // Limited concurrency to avoid overwhelming the backend.
-    const ids = assets.map((a) => a.id).slice(0, 12); // keep POC snappy
+    // Best-effort heartbeat for list: query a small subset concurrently to keep POC snappy.
+    const ids = assets.map((a) => a.id).slice(0, 12);
     const concurrency = 4;
 
     const next = {};
@@ -162,6 +161,13 @@ export function AssetsPage() {
           interval: 60,
         });
         setDetailTelemetry(res);
+
+        // Also update heartbeat for the selected asset (most useful for detail panel).
+        const points = Array.isArray(res?.points) ? res.points : [];
+        const latest = points.reduce((acc, p) => (p.timestamp && p.timestamp > acc ? p.timestamp : acc), "");
+        if (latest) {
+          setHeartbeats((prev) => ({ ...prev, [assetId]: latest }));
+        }
       } catch (e) {
         setDetailError(e?.message || "Failed to load asset telemetry");
         setDetailTelemetry(null);
@@ -185,14 +191,20 @@ export function AssetsPage() {
   }, [detailTelemetry]);
 
   const series = useMemo(() => buildSeries(detailTelemetry, chartKeys), [detailTelemetry, chartKeys]);
+  const selectedHeartbeat = selectedAssetId ? heartbeats[selectedAssetId] || series.latestTimestamp || null : null;
 
   const actions = (
     <div className={styles.controlsRow}>
       <Button variant="secondary" ariaLabel="Reload assets" onClick={() => loadAssets()} disabled={loading}>
         Reload
       </Button>
-      <Button variant="ghost" ariaLabel="Load latest heartbeats" onClick={() => loadHeartbeats()} disabled={loading || assets.length === 0}>
-        Load heartbeats
+      <Button
+        variant="ghost"
+        ariaLabel="Load latest heartbeats"
+        onClick={() => loadHeartbeats()}
+        disabled={loading || assets.length === 0}
+      >
+        Load heartbeats (list)
       </Button>
     </div>
   );
@@ -212,57 +224,70 @@ export function AssetsPage() {
     <div className={styles.pageGrid}>
       <Card title="Assets" actions={actions}>
         <div className={styles.mutedText}>
-          Asset list is sourced from <code>GET /api/v1/assets</code>. Heartbeat is derived from recent telemetry lookback (best-effort).
+          Assets are sourced from <code>GET /api/v1/assets</code>. Selecting an asset loads its trend via{" "}
+          <code>GET /api/v1/telemetry</code> (lookback window), and derives a last heartbeat timestamp from recent data.
         </div>
 
-        {assets.length === 0 ? (
-          <EmptyState title="No assets yet" hint="Seed demo assets in the backend and retry." />
-        ) : (
-          <div className={styles.tableWrap} aria-label="Assets table">
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th}>Asset</th>
-                  <th className={styles.th}>Type</th>
-                  <th className={styles.th}>Status</th>
-                  <th className={styles.th}>Latest heartbeat</th>
-                  <th className={styles.th}>Relative</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assets.map((a) => {
-                  const hb = heartbeats[a.id] || null;
-                  const isSelected = a.id === selectedAssetId;
-                  return (
-                    <tr
-                      key={a.id}
-                      className={styles.tr}
-                      tabIndex={0}
-                      aria-label={`Asset row ${a.id}`}
-                      onClick={() => setSelectedAssetId(a.id)}
-                      style={{ background: isSelected ? "rgba(37, 99, 235, 0.06)" : undefined, cursor: "pointer" }}
-                    >
-                      <td className={styles.td} style={{ fontWeight: 800 }}>
-                        {a.name}{" "}
-                        <span style={{ color: "var(--color-muted)", fontWeight: 600, fontSize: 12, marginLeft: 8 }}>
-                          ({a.id})
-                        </span>
-                      </td>
-                      <td className={styles.td}>{a.type}</td>
-                      <td className={styles.td}>
-                        <Badge tone={toneForStatus(a.status)} ariaLabel={`Status ${a.status}`}>
-                          {String(a.status).toUpperCase()}
-                        </Badge>
-                      </td>
-                      <td className={styles.td}>{formatDateTime(hb)}</td>
-                      <td className={styles.td}>{hb ? formatRelativeTime(hb) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <div className={styles.tableWrap} aria-label="Assets table">
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th className={styles.th} scope="col">
+                  Asset
+                </th>
+                <th className={styles.th} scope="col">
+                  Type
+                </th>
+                <th className={styles.th} scope="col">
+                  Status
+                </th>
+                <th className={styles.th} scope="col">
+                  Last heartbeat
+                </th>
+                <th className={styles.th} scope="col">
+                  Relative
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {assets.map((a) => {
+                const hb = heartbeats[a.id] || null;
+                const isSelected = a.id === selectedAssetId;
+                return (
+                  <tr
+                    key={a.id}
+                    className={styles.tr}
+                    tabIndex={0}
+                    aria-label={`Asset row ${a.id}`}
+                    onClick={() => setSelectedAssetId(a.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedAssetId(a.id);
+                      }
+                    }}
+                    style={{ background: isSelected ? "rgba(37, 99, 235, 0.06)" : undefined, cursor: "pointer" }}
+                  >
+                    <td className={styles.td} style={{ fontWeight: 800 }}>
+                      {a.name}{" "}
+                      <span style={{ color: "var(--color-muted)", fontWeight: 600, fontSize: 12, marginLeft: 8 }}>
+                        ({a.id})
+                      </span>
+                    </td>
+                    <td className={styles.td}>{a.type}</td>
+                    <td className={styles.td}>
+                      <Badge tone={toneForStatus(a.status)} ariaLabel={`Status ${a.status}`}>
+                        {String(a.status).toUpperCase()}
+                      </Badge>
+                    </td>
+                    <td className={styles.td}>{formatDateTime(hb)}</td>
+                    <td className={styles.td}>{hb ? formatRelativeTime(hb) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       <Card
@@ -296,8 +321,11 @@ export function AssetsPage() {
               <Badge tone="neutral" ariaLabel="Telemetry view">
                 avg / 60s • last 30 min
               </Badge>
-              <Badge tone="primary" ariaLabel="Latest timestamp">
-                Latest: {formatDateTime(series.latestTimestamp)}
+              <Badge tone="primary" ariaLabel="Last heartbeat">
+                Heartbeat: {formatDateTime(selectedHeartbeat)}
+              </Badge>
+              <Badge tone="neutral" ariaLabel="Relative heartbeat">
+                {selectedHeartbeat ? formatRelativeTime(selectedHeartbeat) : "—"}
               </Badge>
             </div>
 
@@ -306,7 +334,8 @@ export function AssetsPage() {
             </div>
 
             <div className={styles.mutedText}>
-              Mini chart is a lightweight detail panel (POC). Future enhancement: dedicated asset route with full history, KPIs, and alerts.
+              Trend chart is a lightweight POC panel. Future enhancement: dedicated asset route with full history, KPIs, and alert
+              timeline.
             </div>
           </div>
         )}

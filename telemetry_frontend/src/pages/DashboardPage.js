@@ -8,6 +8,7 @@ import styles from "./pages.module.css";
 import { TelemetryLineChart } from "../components/charts/TelemetryLineChart";
 import { formatDateTime } from "../utils/format";
 import { useInterval } from "../hooks/useInterval";
+import { getLatestValue, getWindowAverage } from "../utils/telemetry";
 
 const SENSOR_PALETTE = [
   { line: "rgba(37, 99, 235, 0.95)", fill: "rgba(37, 99, 235, 0.10)" }, // blue
@@ -61,7 +62,7 @@ function buildSeries(telemetry, keys) {
   return { labels, datasets, latestTimestamp: timestamps.length ? timestamps[timestamps.length - 1] : null };
 }
 
-function severityTone(sev) {
+function predictionTone(sev) {
   const s = String(sev || "").toLowerCase();
   if (s === "high") return "error";
   if (s === "medium") return "warning";
@@ -71,100 +72,37 @@ function severityTone(sev) {
 
 /**
  * PUBLIC_INTERFACE
- * DashboardPage: KPIs + live telemetry chart + prediction/health panel.
+ * DashboardPage: KPIs + live telemetry chart + prediction panel.
  */
 export function DashboardPage() {
+  // Base data
   const [assets, setAssets] = useState([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
-  const [lookbackMinutes, setLookbackMinutes] = useState(30);
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [telemetry, setTelemetry] = useState(null);
-  const [telemetryError, setTelemetryError] = useState("");
-
   const [model, setModel] = useState(null);
+
+  // User controls
+  const [lookbackMinutes, setLookbackMinutes] = useState(30);
+  const [agg, setAgg] = useState("avg"); // per backend enum
+  const [intervalSeconds, setIntervalSeconds] = useState(60);
+
+  // Page states
+  const [pageLoading, setPageLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+
+  // Telemetry states
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
+  const [telemetryError, setTelemetryError] = useState("");
+  const [telemetry, setTelemetry] = useState(null);
+
+  // Alerts KPI states
+  const [alertsLastHour, setAlertsLastHour] = useState({ total: 0, error: "" });
+
+  // Prediction states
   const [prediction, setPrediction] = useState(null);
+  const [predictionLoading, setPredictionLoading] = useState(false);
   const [predictionError, setPredictionError] = useState("");
 
-  const [alertsSummary, setAlertsSummary] = useState({ total: 0, bySeverity: {} });
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const loadDashboard = useCallback(
-    async ({ keepSelection = true } = {}) => {
-      setError("");
-      setTelemetryError("");
-      setPredictionError("");
-      setIsRefreshing(true);
-
-      try {
-        const [assetList, modelMeta] = await Promise.all([api.assets.list(), api.model.get()]);
-        setAssets(assetList);
-        setModel(modelMeta);
-
-        let assetId = selectedAssetId;
-        if (!keepSelection || !assetId) {
-          const active = assetList.find((a) => a.status === "active") || assetList[0];
-          assetId = active?.id || "";
-          setSelectedAssetId(assetId);
-        }
-
-        if (assetId) {
-          const now = new Date();
-          const from = new Date(now.getTime() - lookbackMinutes * 60_000);
-          // Aggregation: avg + 60s buckets for readability.
-          const telem = await api.telemetry.get({
-            assetId,
-            from: from.toISOString(),
-            to: now.toISOString(),
-            agg: "avg",
-            interval: 60,
-          });
-          setTelemetry(telem);
-
-          const pred = await api.prediction.predict({ asset_id: assetId });
-          setPrediction(pred);
-        } else {
-          setTelemetry(null);
-          setPrediction(null);
-        }
-
-        // Alerts KPI: last 24h, limit for POC.
-        const nowIso = new Date().toISOString();
-        const fromIso = new Date(Date.now() - 24 * 3600_000).toISOString();
-        const alertRes = await api.alerts.list({ from: fromIso, to: nowIso, limit: 200, sort: "created_at:desc" });
-
-        const bySeverity = (alertRes.items || []).reduce((acc, a) => {
-          const key = String(a.severity || "unknown");
-          acc[key] = (acc[key] || 0) + 1;
-          return acc;
-        }, {});
-        setAlertsSummary({ total: alertRes.total || 0, bySeverity });
-      } catch (e) {
-        setError(e?.message || "Failed to load dashboard data");
-      } finally {
-        setLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [lookbackMinutes, selectedAssetId]
-  );
-
-  // Initial load (and reload when lookback changes).
-  React.useEffect(() => {
-    setLoading(true);
-    loadDashboard({ keepSelection: true });
-  }, [loadDashboard]);
-
-  // Poll telemetry/prediction periodically without resetting the whole page.
-  useInterval(
-    () => {
-      if (!selectedAssetId) return;
-      loadDashboard({ keepSelection: true });
-    },
-    selectedAssetId ? 20_000 : null
-  );
 
   const assetOptions = useMemo(() => {
     return assets.map((a) => ({
@@ -174,48 +112,164 @@ export function DashboardPage() {
     }));
   }, [assets]);
 
+  const assetsOnline = useMemo(() => assets.filter((a) => a.status === "active").length, [assets]);
+
   const keysForChart = useMemo(() => {
-    // Prefer a stable subset if present; otherwise derive from response.
     const pts = Array.isArray(telemetry?.points) ? telemetry.points : [];
     const uniqueKeys = Array.from(new Set(pts.map((p) => p.key).filter(Boolean)));
+
+    // Keep a stable "primary metric" if present; otherwise fallback.
     const preferred = ["temperature_c", "vibration", "pressure", "rpm", "speed_kph"];
     const existingPreferred = preferred.filter((k) => uniqueKeys.includes(k));
     const fallback = uniqueKeys.slice(0, 4);
     return existingPreferred.length ? existingPreferred : fallback;
   }, [telemetry]);
 
+  const primaryMetric = keysForChart[0] || "";
   const series = useMemo(() => buildSeries(telemetry, keysForChart), [telemetry, keysForChart]);
 
-  const assetsOnline = useMemo(() => assets.filter((a) => a.status === "active").length, [assets]);
+  const latestPrimary = useMemo(() => getLatestValue(telemetry?.points, primaryMetric), [primaryMetric, telemetry?.points]);
+
+  const fiveMinAvgPrimary = useMemo(() => {
+    // Windowed average from the returned aggregated (or raw) series.
+    const nowIso = new Date().toISOString();
+    return getWindowAverage(telemetry?.points, primaryMetric, 5 * 60_000, nowIso);
+  }, [primaryMetric, telemetry?.points]);
 
   const latestTs = useMemo(() => {
-    // Prefer telemetry latest timestamp, else prediction used timestamp, else inferred_at.
     return series.latestTimestamp || prediction?.used_timestamp || prediction?.inferred_at || null;
-  }, [prediction, series.latestTimestamp]);
+  }, [prediction?.inferred_at, prediction?.used_timestamp, series.latestTimestamp]);
 
-  const kpiAlertCritical = alertsSummary.bySeverity?.critical || 0;
-  const kpiAlertHigh = alertsSummary.bySeverity?.high || 0;
+  const loadBase = useCallback(async () => {
+    setPageError("");
+    setPageLoading(true);
 
-  if (loading) {
-    return <LoadingState label="Loading dashboard" />;
-  }
+    try {
+      const [assetList, modelMeta] = await Promise.all([api.assets.list(), api.model.get()]);
+      setAssets(assetList);
+      setModel(modelMeta);
 
-  if (error) {
-    return <ErrorState title="Dashboard failed to load" hint={error} onRetry={() => loadDashboard({ keepSelection: true })} />;
+      const current = selectedAssetId || assetList.find((a) => a.status === "active")?.id || assetList[0]?.id || "";
+      setSelectedAssetId(current);
+    } catch (e) {
+      setPageError(e?.message || "Failed to load dashboard");
+    } finally {
+      setPageLoading(false);
+    }
+  }, [selectedAssetId]);
+
+  const loadTelemetry = useCallback(
+    async (assetId) => {
+      if (!assetId) return;
+
+      setTelemetryError("");
+      setTelemetryLoading(true);
+
+      try {
+        const now = new Date();
+        const from = new Date(now.getTime() - lookbackMinutes * 60_000);
+
+        const res = await api.telemetry.get({
+          assetId,
+          from: from.toISOString(),
+          to: now.toISOString(),
+          agg,
+          interval: agg === "none" ? undefined : intervalSeconds,
+        });
+
+        setTelemetry(res);
+      } catch (e) {
+        setTelemetry(null);
+        setTelemetryError(e?.message || "Failed to load telemetry");
+      } finally {
+        setTelemetryLoading(false);
+      }
+    },
+    [agg, intervalSeconds, lookbackMinutes]
+  );
+
+  const loadAlertsLastHour = useCallback(async () => {
+    setAlertsLastHour({ total: 0, error: "" });
+    try {
+      const nowIso = new Date().toISOString();
+      const fromIso = new Date(Date.now() - 60 * 60_000).toISOString();
+      // We only need `total`, so keep response tiny.
+      const res = await api.alerts.list({ from: fromIso, to: nowIso, limit: 1, sort: "created_at:desc" });
+      setAlertsLastHour({ total: res.total || 0, error: "" });
+    } catch (e) {
+      setAlertsLastHour({ total: 0, error: e?.message || "Failed to load alerts KPI" });
+    }
+  }, []);
+
+  const runPrediction = useCallback(
+    async (assetId) => {
+      if (!assetId) return;
+      setPredictionError("");
+      setPredictionLoading(true);
+      try {
+        const pred = await api.prediction.predict({ asset_id: assetId });
+        setPrediction(pred);
+      } catch (e) {
+        setPrediction(null);
+        setPredictionError(e?.message || "Failed to run prediction");
+      } finally {
+        setPredictionLoading(false);
+      }
+    },
+    [setPrediction]
+  );
+
+  const refreshAll = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      if (!assets.length) {
+        await loadBase();
+      }
+      if (selectedAssetId) {
+        await Promise.all([loadTelemetry(selectedAssetId), loadAlertsLastHour(), runPrediction(selectedAssetId)]);
+      } else {
+        await loadAlertsLastHour();
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [assets.length, loadAlertsLastHour, loadBase, loadTelemetry, runPrediction, selectedAssetId]);
+
+  // Initial base load
+  React.useEffect(() => {
+    loadBase();
+  }, [loadBase]);
+
+  // When selection or telemetry controls change, reload telemetry + prediction
+  React.useEffect(() => {
+    if (!selectedAssetId) return;
+    loadTelemetry(selectedAssetId);
+    runPrediction(selectedAssetId);
+    loadAlertsLastHour();
+  }, [loadAlertsLastHour, loadTelemetry, runPrediction, selectedAssetId]);
+
+  // Poll telemetry only (keeps dashboard snappy).
+  useInterval(
+    () => {
+      if (!selectedAssetId) return;
+      loadTelemetry(selectedAssetId);
+      loadAlertsLastHour();
+    },
+    selectedAssetId ? 20_000 : null
+  );
+
+  if (pageLoading) return <LoadingState label="Loading dashboard" />;
+  if (pageError) {
+    return <ErrorState title="Dashboard failed to load" hint={pageError} onRetry={() => loadBase()} />;
   }
 
   return (
     <div className={styles.pageGrid}>
       <Card
-        title="Fleet Health Overview"
+        title="Fleet Overview"
         actions={
           <div className={styles.controlsRow}>
-            <Button
-              variant="primary"
-              ariaLabel="Refresh dashboard"
-              isLoading={isRefreshing}
-              onClick={() => loadDashboard({ keepSelection: true })}
-            >
+            <Button variant="primary" ariaLabel="Refresh dashboard" isLoading={isRefreshing} onClick={refreshAll}>
               Refresh
             </Button>
           </div>
@@ -228,24 +282,26 @@ export function DashboardPage() {
             <div className={styles.kpiHint}>Active within heartbeat window</div>
           </div>
 
-          <div className={styles.kpiCard} role="group" aria-label="Latest timestamp">
-            <div className={styles.kpiLabel}>Latest timestamp</div>
-            <div className={styles.kpiValue} style={{ fontSize: 14 }}>
-              {formatDateTime(latestTs)}
+          <div className={styles.kpiCard} role="group" aria-label="Latest value">
+            <div className={styles.kpiLabel}>Latest ({primaryMetric || "metric"})</div>
+            <div className={styles.kpiValue}>
+              {latestPrimary.value === null ? "—" : Number(latestPrimary.value).toFixed(2)}
             </div>
-            <div className={styles.kpiHint}>From latest telemetry/prediction</div>
+            <div className={styles.kpiHint}>at {formatDateTime(latestPrimary.timestamp)}</div>
           </div>
 
-          <div className={styles.kpiCard} role="group" aria-label="Critical alerts">
-            <div className={styles.kpiLabel}>Critical alerts (24h)</div>
-            <div className={styles.kpiValue}>{kpiAlertCritical}</div>
-            <div className={styles.kpiHint}>Severity: critical</div>
+          <div className={styles.kpiCard} role="group" aria-label="5 minute average">
+            <div className={styles.kpiLabel}>5m avg ({primaryMetric || "metric"})</div>
+            <div className={styles.kpiValue}>
+              {fiveMinAvgPrimary.avg === null ? "—" : Number(fiveMinAvgPrimary.avg).toFixed(2)}
+            </div>
+            <div className={styles.kpiHint}>{fiveMinAvgPrimary.count ? `${fiveMinAvgPrimary.count} points` : "No points"}</div>
           </div>
 
-          <div className={styles.kpiCard} role="group" aria-label="High alerts">
-            <div className={styles.kpiLabel}>High alerts (24h)</div>
-            <div className={styles.kpiValue}>{kpiAlertHigh}</div>
-            <div className={styles.kpiHint}>Severity: high</div>
+          <div className={styles.kpiCard} role="group" aria-label="Alerts in last hour">
+            <div className={styles.kpiLabel}>Alerts (last hour)</div>
+            <div className={styles.kpiValue}>{alertsLastHour.total}</div>
+            <div className={styles.kpiHint}>{alertsLastHour.error ? alertsLastHour.error : "Server-side count"}</div>
           </div>
         </div>
       </Card>
@@ -263,11 +319,7 @@ export function DashboardPage() {
                   id="assetSelect"
                   className={styles.select}
                   value={selectedAssetId}
-                  onChange={(e) => {
-                    setSelectedAssetId(e.target.value);
-                    // force reload for the new asset
-                    window.setTimeout(() => loadDashboard({ keepSelection: true }), 0);
-                  }}
+                  onChange={(e) => setSelectedAssetId(e.target.value)}
                   aria-label="Select asset for telemetry"
                 >
                   <option value="" disabled>
@@ -298,22 +350,60 @@ export function DashboardPage() {
                 </select>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Badge tone="primary" ariaLabel="Aggregation average with 60 second buckets">
-                  avg / 60s
-                </Badge>
+              <div className={styles.controlGroup}>
+                <label className={styles.controlLabel} htmlFor="aggSelect">
+                  Aggregation
+                </label>
+                <select
+                  id="aggSelect"
+                  className={styles.select}
+                  value={agg}
+                  onChange={(e) => setAgg(e.target.value)}
+                  aria-label="Select aggregation"
+                >
+                  <option value="none">none (raw)</option>
+                  <option value="avg">avg</option>
+                  <option value="min">min</option>
+                  <option value="max">max</option>
+                  <option value="p50">p50</option>
+                  <option value="p90">p90</option>
+                </select>
               </div>
+
+              <div className={styles.controlGroup}>
+                <label className={styles.controlLabel} htmlFor="intervalSelect">
+                  Interval
+                </label>
+                <select
+                  id="intervalSelect"
+                  className={styles.select}
+                  value={String(intervalSeconds)}
+                  onChange={(e) => setIntervalSeconds(Number(e.target.value))}
+                  aria-label="Select aggregation interval"
+                  disabled={agg === "none"}
+                >
+                  <option value="30">30s</option>
+                  <option value="60">60s</option>
+                  <option value="300">300s</option>
+                </select>
+              </div>
+
+              <Badge tone="primary" ariaLabel="Polling interval 20 seconds">
+                poll 20s
+              </Badge>
             </div>
           }
         >
-          {telemetryError ? (
-            <ErrorState title="Telemetry failed to load" hint={telemetryError} onRetry={() => loadDashboard({ keepSelection: true })} />
+          {telemetryLoading ? (
+            <LoadingState label="Loading telemetry" />
+          ) : telemetryError ? (
+            <ErrorState title="Telemetry failed to load" hint={telemetryError} onRetry={() => loadTelemetry(selectedAssetId)} />
           ) : !selectedAssetId ? (
             <EmptyState title="Select an asset" hint="Choose an asset to view its telemetry chart." />
           ) : !series.labels.length ? (
             <EmptyState
               title="No telemetry points"
-              hint="Seed or simulate data in the backend, then refresh. Chart uses aggregated telemetry over the selected window."
+              hint="Seed or simulate data in the backend, then refresh. Chart uses the selected aggregation/window."
             />
           ) : (
             <div className={styles.chartWrap}>
@@ -323,10 +413,10 @@ export function DashboardPage() {
         </Card>
 
         <Card
-          title="Prediction & Health"
+          title="Prediction"
           actions={
             prediction?.severity ? (
-              <Badge tone={severityTone(prediction.severity)} ariaLabel={`Prediction severity ${prediction.severity}`}>
+              <Badge tone={predictionTone(prediction.severity)} ariaLabel={`Prediction severity ${prediction.severity}`}>
                 {String(prediction.severity).toUpperCase()}
               </Badge>
             ) : (
@@ -338,10 +428,20 @@ export function DashboardPage() {
         >
           {!selectedAssetId ? (
             <EmptyState title="Select an asset" hint="Prediction is computed for the selected asset using the most recent telemetry." />
+          ) : predictionLoading ? (
+            <LoadingState label="Running prediction" />
           ) : predictionError ? (
-            <ErrorState title="Prediction failed to load" hint={predictionError} onRetry={() => loadDashboard({ keepSelection: true })} />
+            <ErrorState title="Prediction failed" hint={predictionError} onRetry={() => runPrediction(selectedAssetId)} />
           ) : !prediction ? (
-            <LoadingState label="Computing prediction" />
+            <EmptyState
+              title="No prediction yet"
+              hint="Run a prediction for the selected asset."
+              action={
+                <Button variant="primary" ariaLabel="Run prediction" onClick={() => runPrediction(selectedAssetId)}>
+                  Run prediction
+                </Button>
+              }
+            />
           ) : (
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -355,6 +455,12 @@ export function DashboardPage() {
 
               <div className={styles.mutedText} aria-label="Recommendation">
                 <strong>Recommendation:</strong> {prediction.recommendation || "—"}
+              </div>
+
+              <div className={styles.controlsRow}>
+                <Button variant="secondary" ariaLabel="Re-run prediction" onClick={() => runPrediction(selectedAssetId)}>
+                  Re-run
+                </Button>
               </div>
 
               <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
@@ -381,6 +487,10 @@ export function DashboardPage() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              <div className={styles.mutedText} aria-label="Latest timestamp">
+                <strong>Latest timestamp:</strong> {formatDateTime(latestTs)}
               </div>
             </div>
           )}

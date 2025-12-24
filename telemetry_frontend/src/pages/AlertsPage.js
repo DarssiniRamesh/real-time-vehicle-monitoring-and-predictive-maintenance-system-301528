@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { EmptyState, ErrorState, LoadingState } from "../components/ui/States";
+import { EmptyState, ErrorState } from "../components/ui/States";
 import { TableSkeleton } from "../components/ui/TableSkeleton";
 import { api } from "../api/client";
 import styles from "./pages.module.css";
@@ -28,6 +28,13 @@ function nextSort(sort, field) {
   return null;
 }
 
+function ariaSortFor(sort, field) {
+  if (!sort) return "none";
+  const [f, dir] = sort.split(":");
+  if (f !== field) return "none";
+  return dir === "asc" ? "ascending" : "descending";
+}
+
 /**
  * PUBLIC_INTERFACE
  * AlertsPage lists alerts with filtering/sorting/pagination and bulk acknowledgement.
@@ -39,16 +46,19 @@ export function AlertsPage() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
 
+  // Server-side filters
   const [severity, setSeverity] = useState("");
   const [assetId, setAssetId] = useState("");
   const [acknowledged, setAcknowledged] = useState(""); // "", "true", "false"
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
+  // Server-side sorting/pagination
   const [sort, setSort] = useState("created_at:desc");
   const [page, setPage] = useState(1);
   const limit = 25;
 
+  // Selection + bulk ack
   const [selected, setSelected] = useState(() => new Set());
   const [isAcking, setIsAcking] = useState(false);
 
@@ -77,7 +87,7 @@ export function AlertsPage() {
     } finally {
       setLoading(false);
     }
-  }, [acknowledged, assetId, from, page, severity, sort, to]);
+  }, [acknowledged, assetId, from, limit, page, severity, sort, to]);
 
   React.useEffect(() => {
     load();
@@ -87,7 +97,10 @@ export function AlertsPage() {
   const selectedCount = selected.size;
 
   const allVisibleIds = useMemo(() => items.map((a) => a.id), [items]);
-  const allSelectedOnPage = useMemo(() => allVisibleIds.every((id) => selected.has(id)), [allVisibleIds, selected]);
+  const allSelectedOnPage = useMemo(() => allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id)), [
+    allVisibleIds,
+    selected,
+  ]);
 
   const toggleAll = useCallback(() => {
     setSelected((prev) => {
@@ -147,31 +160,43 @@ export function AlertsPage() {
     }
   }, [items, load, selected]);
 
-  const onTableKeyDown = useCallback((e) => {
-    const key = e.key;
-    if (key !== "ArrowDown" && key !== "ArrowUp") return;
+  const onTableKeyDown = useCallback(
+    (e) => {
+      const key = e.key;
 
-    const active = document.activeElement;
-    const row = active?.closest?.("tr[data-rowindex]");
-    if (!row) return;
+      // Toggle selection on focused row via Space/Enter.
+      if (key === " " || key === "Enter") {
+        const active = document.activeElement;
+        const row = active?.closest?.("tr[data-alertid]");
+        if (!row) return;
+        const id = row.getAttribute("data-alertid");
+        if (!id) return;
+        e.preventDefault();
+        toggleOne(id);
+        return;
+      }
 
-    e.preventDefault();
-    const idx = Number(row.getAttribute("data-rowindex"));
-    const nextIdx = key === "ArrowDown" ? idx + 1 : idx - 1;
+      // Keyboard navigation between rows.
+      if (key !== "ArrowDown" && key !== "ArrowUp") return;
 
-    const nextRow = tableRef.current?.querySelector?.(`tr[data-rowindex="${nextIdx}"]`);
-    const focusTarget = nextRow?.querySelector?.('button, input, a, [tabindex="0"]') || nextRow;
-    if (focusTarget && typeof focusTarget.focus === "function") focusTarget.focus();
-  }, []);
+      const active = document.activeElement;
+      const row = active?.closest?.("tr[data-rowindex]");
+      if (!row) return;
+
+      e.preventDefault();
+      const idx = Number(row.getAttribute("data-rowindex"));
+      const nextIdx = key === "ArrowDown" ? idx + 1 : idx - 1;
+
+      const nextRow = tableRef.current?.querySelector?.(`tr[data-rowindex="${nextIdx}"]`);
+      const focusTarget = nextRow?.querySelector?.('button, input, a, [tabindex="0"]') || nextRow;
+      if (focusTarget && typeof focusTarget.focus === "function") focusTarget.focus();
+    },
+    [toggleOne]
+  );
 
   const tableActions = (
     <div className={styles.controlsRow}>
-      <Button
-        variant="secondary"
-        ariaLabel="Reload alerts"
-        onClick={() => load()}
-        disabled={loading || isAcking}
-      >
+      <Button variant="secondary" ariaLabel="Reload alerts" onClick={() => load()} disabled={loading || isAcking}>
         Reload
       </Button>
       <Button
@@ -283,12 +308,7 @@ export function AlertsPage() {
             />
           </div>
 
-          <Button
-            variant="ghost"
-            ariaLabel="Apply filters"
-            onClick={() => load()}
-            disabled={loading || isAcking}
-          >
+          <Button variant="ghost" ariaLabel="Apply filters" onClick={() => load()} disabled={loading || isAcking}>
             Apply
           </Button>
         </div>
@@ -296,7 +316,7 @@ export function AlertsPage() {
         {loading ? (
           <>
             <TableSkeleton rows={6} columns={6} />
-            <LoadingState label="Loading alerts" />
+            <div style={{ color: "var(--color-muted)", fontSize: 13 }}>Loading alerts…</div>
           </>
         ) : error ? (
           <ErrorState title="Alerts failed to load" hint={error} onRetry={() => load()} />
@@ -316,7 +336,7 @@ export function AlertsPage() {
               <table ref={tableRef} className={styles.table} onKeyDown={onTableKeyDown}>
                 <thead>
                   <tr>
-                    <th className={styles.th} style={{ width: 44 }}>
+                    <th className={styles.th} style={{ width: 44 }} scope="col">
                       <input
                         className={styles.checkbox}
                         type="checkbox"
@@ -325,50 +345,75 @@ export function AlertsPage() {
                         aria-label="Select all alerts on this page"
                       />
                     </th>
-                    <th className={styles.th}>
+
+                    <th className={styles.th} scope="col" aria-sort={ariaSortFor(sort, "created_at")}>
                       <button
                         type="button"
                         className="iconButton"
                         style={{ padding: "8px 10px" }}
-                        onClick={() => setSort((s) => nextSort(s, "created_at"))}
+                        onClick={() => {
+                          setPage(1);
+                          setSort((s) => nextSort(s, "created_at"));
+                        }}
                         aria-label="Sort by created time"
                       >
                         Time
                       </button>
                     </th>
-                    <th className={styles.th}>
+
+                    <th className={styles.th} scope="col" aria-sort={ariaSortFor(sort, "severity")}>
                       <button
                         type="button"
                         className="iconButton"
                         style={{ padding: "8px 10px" }}
-                        onClick={() => setSort((s) => nextSort(s, "severity"))}
+                        onClick={() => {
+                          setPage(1);
+                          setSort((s) => nextSort(s, "severity"));
+                        }}
                         aria-label="Sort by severity"
                       >
                         Severity
                       </button>
                     </th>
-                    <th className={styles.th}>
+
+                    <th className={styles.th} scope="col" aria-sort={ariaSortFor(sort, "asset_id")}>
                       <button
                         type="button"
                         className="iconButton"
                         style={{ padding: "8px 10px" }}
-                        onClick={() => setSort((s) => nextSort(s, "asset_id"))}
+                        onClick={() => {
+                          setPage(1);
+                          setSort((s) => nextSort(s, "asset_id"));
+                        }}
                         aria-label="Sort by asset id"
                       >
                         Asset
                       </button>
                     </th>
-                    <th className={styles.th}>Message</th>
-                    <th className={styles.th}>State</th>
+
+                    <th className={styles.th} scope="col">
+                      Message
+                    </th>
+                    <th className={styles.th} scope="col">
+                      State
+                    </th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {items.map((a, idx) => {
                     const isSelected = selected.has(a.id);
                     const isAcked = a.state === "acked" || Boolean(a.acked_at);
 
                     return (
-                      <tr key={a.id} className={styles.tr} data-rowindex={idx} tabIndex={0} aria-label={`Alert row ${idx + 1}`}>
+                      <tr
+                        key={a.id}
+                        className={styles.tr}
+                        data-rowindex={idx}
+                        data-alertid={a.id}
+                        tabIndex={0}
+                        aria-label={`Alert row ${idx + 1}`}
+                      >
                         <td className={styles.td}>
                           <input
                             className={styles.checkbox}
@@ -378,16 +423,24 @@ export function AlertsPage() {
                             aria-label={`Select alert ${a.id}`}
                           />
                         </td>
+
                         <td className={styles.td}>{formatDateTime(a.created_at)}</td>
+
                         <td className={styles.td}>
                           <Badge tone={severityTone(a.severity)} ariaLabel={`Severity ${a.severity}`}>
                             {String(a.severity).toUpperCase()}
                           </Badge>
                         </td>
-                        <td className={styles.td} style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+
+                        <td
+                          className={styles.td}
+                          style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
+                        >
                           {a.asset_id}
                         </td>
+
                         <td className={styles.td}>{a.message}</td>
+
                         <td className={styles.td}>
                           {isAcked ? (
                             <Badge tone="success" ariaLabel="Acknowledged">
