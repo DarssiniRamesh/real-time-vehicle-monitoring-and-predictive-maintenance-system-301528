@@ -1,5 +1,5 @@
-import React from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
 import { ThemeProvider, getEnvironmentLabel } from "./theme/ThemeProvider";
 import { Badge } from "./components/ui/Badge";
@@ -51,114 +51,168 @@ function Icon({ name }) {
           />
         </svg>
       );
+    case "menu":
+      return (
+        <svg className="navIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 6.5h16M4 12h16M4 17.5h16"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            opacity="0.92"
+          />
+        </svg>
+      );
     default:
       return null;
   }
 }
 
+function NotFound() {
+  return (
+    <div style={{ color: "var(--color-muted)", fontSize: 13 }}>
+      The page you’re looking for doesn’t exist.
+    </div>
+  );
+}
+
+// PUBLIC_INTERFACE
+function AppShell() {
+  /** AppShell renders the persistent shell (sidebar + topbar) and route outlet. */
+  const envLabel = getEnvironmentLabel();
+  const location = useLocation();
+
+  const [isNavOpen, setIsNavOpen] = useState(false);
+
+  // Close mobile drawer whenever route changes.
+  useEffect(() => {
+    setIsNavOpen(false);
+  }, [location.pathname]);
+
+  // Close mobile drawer on Escape (when open).
+  useEffect(() => {
+    if (!isNavOpen) return;
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") setIsNavOpen(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isNavOpen]);
+
+  const navLinks = useMemo(() => {
+    return [
+      { to: "/", end: true, label: "Dashboard", icon: "dashboard" },
+      { to: "/assets", label: "Assets", icon: "assets" },
+      { to: "/alerts", label: "Alerts", icon: "alerts" },
+      { to: "/settings", label: "Settings", icon: "settings" },
+    ];
+  }, []);
+
+  return (
+    <div className="appShell">
+      <a className="skipLink" href="#mainContent">
+        Skip to content
+      </a>
+
+      {/* Overlay for mobile drawer */}
+      <button
+        type="button"
+        className={isNavOpen ? "navOverlay navOverlayOpen" : "navOverlay"}
+        aria-label="Close navigation menu"
+        onClick={() => setIsNavOpen(false)}
+      />
+
+      <aside
+        id="primaryNav"
+        className={isNavOpen ? "sidebar sidebarOpen" : "sidebar"}
+        aria-label="Primary navigation"
+      >
+        <div className="brandRow">
+          <div className="brandMark" aria-hidden="true" />
+          <div className="brandTitle">
+            <strong>Predictive Maintenance</strong>
+            <span>Ocean Professional</span>
+          </div>
+        </div>
+
+        <nav aria-label="Main">
+          <div className="navGroupLabel">Navigation</div>
+          <ul className="navList">
+            {navLinks.map((item) => (
+              <li key={item.to}>
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) => (isActive ? "navLink navLinkActive" : "navLink")}
+                  aria-label={`Go to ${item.label}`}
+                >
+                  <Icon name={item.icon} />
+                  <span>{item.label}</span>
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </aside>
+
+      <main className="main" id="mainContent" tabIndex={-1}>
+        <header className="topbar" aria-label="Top bar">
+          <div className="topbarLeft">
+            <button
+              type="button"
+              className="iconButton menuButton"
+              aria-label="Open navigation menu"
+              aria-controls="primaryNav"
+              aria-expanded={isNavOpen ? "true" : "false"}
+              onClick={() => setIsNavOpen(true)}
+            >
+              <Icon name="menu" />
+            </button>
+
+            <h1 className="appTitle">Real-time Vehicle Monitoring</h1>
+            <Badge tone="primary" ariaLabel={`Environment ${envLabel}`}>
+              {envLabel}
+            </Badge>
+          </div>
+
+          <div className="topbarRight">
+            <button type="button" aria-label="Notifications" className="iconButton">
+              <Icon name="alerts" />
+              <span className="sr-only">Notifications</span>
+            </button>
+          </div>
+        </header>
+
+        <div className="contentWrap">
+          <div className="contentInner" aria-label="Page content">
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/assets" element={<AssetsPage />} />
+              <Route path="/alerts" element={<AlertsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 /**
  * PUBLIC_INTERFACE
  * App provides the global application shell:
- * - Persistent side navigation
+ * - Persistent side navigation + mobile drawer
  * - Top bar with title, environment badge, notifications button
  * - Responsive content area with gradient background and card surfaces
  */
 function App() {
-  const envLabel = getEnvironmentLabel();
-
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <div className="appShell">
-          <aside className="sidebar" aria-label="Primary navigation">
-            <div className="brandRow">
-              <div className="brandMark" aria-hidden="true" />
-              <div className="brandTitle">
-                <strong>Predictive Maintenance</strong>
-                <span>Ocean Professional</span>
-              </div>
-            </div>
-
-            <div className="navGroupLabel">Navigation</div>
-            <ul className="navList">
-              <li>
-                <NavLink
-                  to="/"
-                  end
-                  className={({ isActive }) => (isActive ? "navLink navLinkActive" : "navLink")}
-                  aria-label="Go to Dashboard"
-                >
-                  <Icon name="dashboard" />
-                  <span>Dashboard</span>
-                </NavLink>
-              </li>
-              <li>
-                <NavLink
-                  to="/assets"
-                  className={({ isActive }) => (isActive ? "navLink navLinkActive" : "navLink")}
-                  aria-label="Go to Assets"
-                >
-                  <Icon name="assets" />
-                  <span>Assets</span>
-                </NavLink>
-              </li>
-              <li>
-                <NavLink
-                  to="/alerts"
-                  className={({ isActive }) => (isActive ? "navLink navLinkActive" : "navLink")}
-                  aria-label="Go to Alerts"
-                >
-                  <Icon name="alerts" />
-                  <span>Alerts</span>
-                </NavLink>
-              </li>
-              <li>
-                <NavLink
-                  to="/settings"
-                  className={({ isActive }) => (isActive ? "navLink navLinkActive" : "navLink")}
-                  aria-label="Go to Settings"
-                >
-                  <Icon name="settings" />
-                  <span>Settings</span>
-                </NavLink>
-              </li>
-            </ul>
-          </aside>
-
-          <main className="main">
-            <header className="topbar" aria-label="Top bar">
-              <div className="topbarLeft">
-                <h1 className="appTitle">Real-time Vehicle Monitoring</h1>
-                <Badge tone="primary" ariaLabel={`Environment ${envLabel}`}>
-                  {envLabel}
-                </Badge>
-              </div>
-
-              <div className="topbarRight">
-                <button
-                  type="button"
-                  aria-label="Notifications"
-                  className="navLink"
-                  style={{ padding: "10px 12px" }}
-                >
-                  <Icon name="alerts" />
-                  <span className="sr-only">Notifications</span>
-                </button>
-              </div>
-            </header>
-
-            <div className="contentWrap">
-              <div className="contentInner" aria-label="Page content">
-                <Routes>
-                  <Route path="/" element={<DashboardPage />} />
-                  <Route path="/assets" element={<AssetsPage />} />
-                  <Route path="/alerts" element={<AlertsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                </Routes>
-              </div>
-            </div>
-          </main>
-        </div>
+        <AppShell />
       </BrowserRouter>
     </ThemeProvider>
   );
