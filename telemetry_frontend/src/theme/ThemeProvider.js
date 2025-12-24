@@ -1,4 +1,5 @@
 import React, { createContext, useMemo } from "react";
+import { getEnvironmentLabel as getEnvironmentLabelFromEnv } from "../config/env";
 
 /**
  * A tiny theme context to keep structure production-ready even though tokens
@@ -30,7 +31,5 @@ export function ThemeProvider({ children }) {
  * @returns {string}
  */
 export function getEnvironmentLabel() {
-  const custom = (process.env.REACT_APP_ENV || "").trim();
-  const env = custom || process.env.NODE_ENV || "development";
-  return env.toUpperCase();
+  return getEnvironmentLabelFromEnv();
 }

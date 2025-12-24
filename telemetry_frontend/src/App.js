@@ -7,6 +7,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { api } from "./api/client";
+import { getRuntimeConfig } from "./config/env";
 
 function Icon({ name }) {
   // Simple inline icons to avoid additional dependencies.
@@ -209,6 +211,29 @@ function AppShell() {
  * - Responsive content area with gradient background and card surfaces
  */
 function App() {
+  // Basic connectivity log at startup for POC/debugging.
+  useEffect(() => {
+    const cfg = getRuntimeConfig();
+    // eslint-disable-next-line no-console
+    console.info("[startup] runtime config", cfg);
+
+    api
+      .healthCheck()
+      .then((res) => {
+        // eslint-disable-next-line no-console
+        console.info("[startup] backend health ok", res);
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("[startup] backend health failed", {
+          message: err?.message,
+          status: err?.status,
+          code: err?.code,
+          url: err?.url,
+        });
+      });
+  }, []);
+
   return (
     <ThemeProvider>
       <BrowserRouter>
