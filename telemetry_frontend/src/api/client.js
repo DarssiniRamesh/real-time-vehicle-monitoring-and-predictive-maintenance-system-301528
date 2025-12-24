@@ -79,6 +79,23 @@ import { getApiBaseUrl } from "../config/env";
  */
 
 /**
+ * @typedef {object} PredictionThresholds
+ * @property {number} temperature_warn_c
+ * @property {number} temperature_crit_c
+ * @property {number} vibration_warn
+ * @property {number} vibration_crit
+ */
+
+/**
+ * @typedef {object} ModelMetadata
+ * @property {string} name
+ * @property {string} version
+ * @property {string} strategy
+ * @property {PredictionThresholds} thresholds
+ * @property {string} updated_at
+ */
+
+/**
  * @typedef {object} SeedRequest
  * @property {number} [assets]
  * @property {number} [points_per_asset]
@@ -336,6 +353,18 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body || {}),
       });
+    },
+  },
+
+  model: {
+    /**
+     * PUBLIC_INTERFACE
+     * Fetch model diagnostics/metadata (rule-based).
+     * GET /api/v1/model
+     * @returns {Promise<ModelMetadata>}
+     */
+    get: async () => {
+      return request("/api/v1/model", { method: "GET" });
     },
   },
 
